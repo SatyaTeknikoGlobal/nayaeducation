@@ -1,0 +1,539 @@
+<?php
+namespace App\Http\Controllers\Admin;
+
+use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
+use Illuminate\Foundation\Bus\DispatchesJobs;
+use Illuminate\Http\Request;
+use Illuminate\Foundation\Validation\ValidatesRequests;
+use Illuminate\Routing\Controller as BaseController;
+use App\Http\Controllers\Controller;
+use App\Helpers\CustomHelper;
+use Auth;
+use Validator;
+use App\User;
+use App\Admin;
+use App\Course;
+use App\Chats;
+use App\Category;
+use App\City;
+use App\SubCategory;
+
+use Yajra\DataTables\DataTables;
+
+
+use Storage;
+use DB;
+use Hash;
+
+use PhpOffice\PhpWord\IOFactory;
+
+
+
+
+Class ChatController extends Controller
+{
+    private $limit;   
+    private $ADMIN_ROUTE_NAME;
+
+    public function __construct()
+    {
+        $this->limit = 100;
+        $this->ADMIN_ROUTE_NAME = CustomHelper::getAdminRouteName();
+    }
+
+	public function index(Request $request)
+    {
+        $data = [];
+		$chats = Chats::select('sender_id','reciever_id')->get();
+         $user_id = [];
+
+         if(!empty($chats))
+         {
+            foreach($chats as $c)
+             {         
+
+               $sender_id = $c->sender_id;                    
+                if(!in_array($c->sender_id, $user_id))
+                { 
+                    if($c->reciever_id != 0)
+                    {
+                         $user_id[] = $c->reciever_id;
+                    }          
+  
+                }
+
+                if(!in_array($c->reciever_id, $user_id))
+                {
+                    if($c->reciever_id != 0)
+                    {
+                         $user_id[] = $c->reciever_id;
+                    }               
+
+                }
+             }
+         }
+
+          if(!empty($user_id))
+         {
+            $data['user_id'] = $user_id[0];
+         }         
+
+        $data['chats'] = $chats;
+        return view('admin.chats.index',$data);
+    }
+
+    public function get_category(Request $request)
+    {
+        $routeName = CustomHelper::getadminRouteName();
+        
+        $datas = Category::where('is_delete','0')->orderBy('id','desc');
+
+        $datas = $datas->get();
+
+        return Datatables::of($datas)
+
+
+        ->editColumn('id', function(Category $data) {
+
+            return  $data->id;
+        })
+               
+
+           ->editColumn('category_name', function(Category $data) {
+            return  $data->category_name;
+        })
+
+
+        ->editColumn('category_description', function(Category $data) {
+            return  $data->category_description;
+        })
+
+             
+        ->editColumn('status', function(Category $data) {
+            $sta = '';
+            $sta1 ='';
+            if($data->status == 1){
+                $sta1 = 'selected';
+            }else{
+                $sta = 'selected';
+            }
+
+           
+            $html = "<select id='change_category_status$data->id' onchange='change_category_status($data->id)'>
+            <option value='1' ".$sta1.">Active</option>
+            <option value='0' ".$sta.">InActive</option>
+            </select>";
+            
+            return  $html;
+        })
+
+     
+
+        ->addColumn('action', function(Category $data) {
+            $routeName = CustomHelper::getAdminRouteName();
+
+            $BackUrl = $routeName.'/categories';
+            $html = '';            
+
+                 if(CustomHelper::isAllowedSection('categories' , Auth::guard('admin')->user()->role_id , $type='edit')){
+                    $html.='<a title="Edit" class="btn btn-primary btn-sm" href="' . route($routeName.'.categories.edit',$data->id.'?back_url='.$BackUrl) . '"><i class="fa fa-edit"></i></a>&nbsp;&nbsp;&nbsp;';
+                }
+
+
+                if(CustomHelper::isAllowedSection('categories' , Auth::guard('admin')->user()->role_id , $type='delete')){
+                     $html.='<a title="Delete" class="btn btn-danger btn-sm" href="' . route($routeName.'.categories.delete',$data->id.'?back_url='.$BackUrl) . '"><i class="fa fa-trash"></i></a>&nbsp;&nbsp;&nbsp;';
+
+                    }
+
+
+                return $html;
+          
+        })
+
+        ->rawColumns(['category_name','category_description','status','action'])
+        ->toJson();
+
+
+    }
+
+    public function add(Request $request)
+    {
+
+
+         $details = [];
+    
+        $id = isset($request->id) ? $request->id : 0;
+
+        $categories = '';
+
+        if(is_numeric($id) && $id > 0)
+        {
+            $categories = Category::find($id);
+            if(empty($categories))
+            {
+                return redirect($this->ADMIN_ROUTE_NAME.'/categories');
+            }
+        }
+       
+
+        if($request->method() == "POST" || $request->method() == "post")
+        {
+            
+           // prd($request->toArray());
+
+            if(empty($back_url))
+            {
+                 $back_url = $this->ADMIN_ROUTE_NAME.'/categories';
+            }
+
+           
+            
+
+            if(is_numeric($request->id) && $request->id > 0)
+            {
+                 $details['category_name'] = 'required';
+                $details['category_description'] = '';
+                
+              
+
+            }else{
+
+                 $details['category_name'] = 'required';
+                $details['category_description'] = '';
+                
+            }
+
+                $this->validate($request , $details);    
+
+
+
+           $createdDetails = $this->save($request , $id);
+
+           if($createdDetails)
+           {
+                $alert_msg = "Category Created Successfully";
+
+                if(is_numeric($id) & $id > 0)
+                {
+                    $alert_msg = "Category Updated Successfully";
+                } 
+                return redirect(url($back_url))->with('alert-success',$alert_msg);
+           }else{
+
+            return back()->with('alert-danger', 'something went wrong, please try again or contact the administrator.');
+           }
+
+        }
+
+        $page_Heading = "Add Category";
+        if(isset($categories->id))
+        {
+            $category_name = $categories->category_name;
+            $page_Heading = 'Update -'.$category_name;
+
+        }
+
+        $details['page_Heading'] = $page_Heading;
+        $details['id'] = $id;
+        $details['categories'] = $categories;
+
+        return view('admin.categories.form',$details);
+
+    }
+
+
+    public function save(Request $request, $id = 0)
+    {
+        $details = $request->except(['_token', 'back_url']);
+
+
+        $old_img = '';
+
+        $categories = new Category;
+
+        if(is_numeric($id) && $id > 0)
+        {
+            $exist = Category::find($id);
+
+            if(isset($exist->id) && $exist->id == $id)
+            {   
+                $categories = $exist;
+
+                $old_img = $exist->image;
+
+            }
+
+        }
+
+        foreach($details as $key => $val)
+        {
+            $categories->$key = $val;
+        }
+
+        $isSaved = $categories->save();
+
+        if($isSaved)
+        {
+            $this->saveImage($request , $categories , $old_img);
+        }
+
+        return $isSaved;
+    }
+
+    private function saveImage($request, $categories, $oldImg=''){
+
+    $file = $request->file('image');
+
+    //prd($file);
+    if ($file) {
+        $path = 'categories/';
+        $thumb_path = 'categories/thumb/';
+        $storage = Storage::disk('public');
+            //prd($storage);
+        $IMG_WIDTH = 768;
+        $IMG_HEIGHT = 768;
+        $THUMB_WIDTH = 336;
+        $THUMB_HEIGHT = 336;
+
+        $uploaded_data = CustomHelper::UploadImage($file, $path, $ext='', $IMG_WIDTH, $IMG_HEIGHT, $is_thumb=true, $thumb_path, $THUMB_WIDTH, $THUMB_HEIGHT);
+
+            // prd($uploaded_data);
+        if($uploaded_data['success']){
+
+            if(!empty($oldImg)){
+                if($storage->exists($path.$oldImg)){
+                    $storage->delete($path.$oldImg);
+                }
+                if($storage->exists($thumb_path.$oldImg)){
+                    $storage->delete($thumb_path.$oldImg);
+                }
+            }
+            $image = $uploaded_data['file_name'];
+
+           // prd($image);
+            $categories->image = $image;
+            $categories->save();         
+        }
+
+        if(!empty($uploaded_data)){   
+            return  $uploaded_data;
+        }  
+
+    }
+
+}
+
+public function change_category_status(Request $request){
+  $id = isset($request->id) ? $request->id :'';
+  $status = isset($request->status) ? $request->status :'';
+
+  $categories = Category::where('id',$id)->first();
+  if(!empty($categories)){
+
+   Category::where('id',$id)->update(['status'=>$status]);
+   $response['success'] = true;
+   $response['message'] = 'Status updated';
+
+
+   return response()->json($response);
+}else{
+   $response['success'] = false;
+   $response['message'] = 'Not  Found';
+   return response()->json($response);  
+}
+
+}
+
+public function delete(Request $request)
+{
+     $id = isset($request->id) ? $request->id : 0;
+
+
+
+     $is_delete = 0;
+
+     if(empty($back_url))
+    {
+        $back_url = $this->ADMIN_ROUTE_NAME.'/categories';
+    }
+
+     if(is_numeric($id) && $id > 0)
+     {
+        //echo $id;
+        $is_delete = Category::where('id', $id)->update(['is_delete'=> '1']);
+     }
+
+     //die;
+
+     if(!empty($is_delete))
+     {
+        return back()->with('alert-success', 'Category Deleted Successfully');
+     }else{
+
+        return back()->with('alert-danger', 'something went wrong, please try again...');
+     }
+    
+}
+
+public function get_user_name(Request $request)
+{    
+    $user_id = isset($request->user_id) ? $request->user_id : 0;
+
+    $user = User::where('id', $user_id)->first();
+
+     echo $user->name.'('.$user->id.')';
+}
+
+public function get_user_list(Request $request)
+{
+    $html = '';
+     $search = isset($request->search) ? $request->search : '';
+     $user_id = isset($request->user_id) ? $request->user_id : '';
+
+  $chats = Chats::select('sender_id','reciever_id')->get();
+
+  $user_ids = [];
+
+ if(!empty($chats))
+ {
+    foreach($chats as $c)
+     {         
+
+       $sender_id = $c->sender_id;                    
+        if(!in_array($c->sender_id, $user_ids))
+        { 
+            if($c->reciever_id != 0)
+            {
+                 $user_ids[] = $c->reciever_id;
+            }          
+
+        }
+
+        if(!in_array($c->reciever_id, $user_ids))
+        {
+            if($c->reciever_id != 0)
+            {
+                 $user_ids[] = $c->reciever_id;
+            }               
+
+        }
+     }
+ }
+
+
+ if(!empty($user_ids))
+ {
+     $users = User::select('id','name','image')->whereIn('id', $user_ids);
+
+    if(!empty($search))
+    {
+        $users->where('name','like','%'.$search.'%');
+    }
+
+    $users = $users->get();
+    if(!empty($users))
+    {
+        $i=1;
+        foreach($users as $user)
+        {
+            $active = '';
+            if($user->id == $user_id)
+            {
+                $active = 'active';
+            }
+            // echo $user->image;
+
+            $html .='<li style="list-style:none;"><a href="javascript:void(0)" onclick="get_user_chat('.$user->id.')" class='.$active.'><img src="https://nayaeducation.appmantra.live/public/assets/new/images/users/'.$user->image.' " alt="user-img" class="me-2 rounded-circle" height="42"> <span>'.$user->name.'</span></a></li>';
+            $i++;
+        }
+    }
+ }else{
+
+    $html .='No User Found';
+ }
+
+echo $html;
+
+}
+
+
+public function get_user_chat(Request $request){
+    $page = isset($request->page) ? $request->page :1;
+
+    $user_id = isset($request->user_id) ? $request->user_id :'';
+    $html = '';
+    $perpage = 5;
+    $count = $perpage * $page;
+    $chats = Chats::where('sender_id','=',$user_id)->orWhere('reciever_id','=',$user_id)->skip(0)->take($count)->get();
+
+    $admin = Auth::guard('admin')->user();
+
+    // print_r($chats);
+
+    if(!empty($chats)){
+        foreach($chats as $chat){
+            if($chat->sender_id !=0){
+                $user = User::where('id',$chat->sender_id);
+                $user = $user->first();
+            }
+            if($chat->reciever_id !=0){
+                $user = User::select('id','name','image')->where('id',$chat->reciever_id);
+                $user = $user->first();
+            }
+
+            $created_at = date('h:i A',strtotime($chat->created_at));
+            //prd($hospital);
+            if($chat->sender_type == 'user' || $chat->reciever_type == 'admin'){
+                /////////Left Side               
+
+                $html.=' <li><div class="chat-img" style="display:inline-block;width:45px;vertical-align:top;"><img src="https://nayaeducation.appmantra.live/public/assets/new/images/users/'.$user->image.' " alt="user" class="me-2 rounded-circle" height="42"></div><div class="chat-content"><h5>'.$user->name.'</h5>
+                <div class="box bg-light-info">'.$chat->text.'</div>
+                <div class="chat-time">'.$created_at.'</div>
+                </div>
+                </li>';
+
+            }
+
+            if($chat->sender_type == 'admin' || $chat->reciever_type == 'user'){
+                /////////Right Side
+                $html.='<li class="reverse" style="text-align: right;">
+                <div class="chat-content" style="display:inline-block;padding-left:15px;">
+                <h5>Admin</h5>
+                <div class="box bg-light-inverse">'.$chat->text.'</div>
+                <div class="chat-time">'.$created_at.'</div>
+                </div>
+                <div class="chat-img"><img src="https://nayaeducation.appmantra.live/public/assets/new/images/users/'.$admin->image.' " alt="user" class="me-2 rounded-circle" height="42"></div>
+                </li>';
+            }
+
+
+        }
+
+    }
+
+    echo $html;
+}
+
+public function send_message(Request $request){
+    $user_id = isset($request->user_id) ? $request->user_id :'';
+    $message = isset($request->message) ? $request->message :'';
+
+    $dbArray = [];
+    $dbArray['sender_id'] = 0;
+    $dbArray['reciever_id'] = $user_id;
+    $dbArray['sender_type'] = 'admin';
+    $dbArray['reciever_type'] = 'user';
+    $dbArray['text'] = $message;
+
+    //print_r($dbArray);
+    Chats::insert($dbArray);
+    echo 1;
+
+}
+
+   
+}
+
+
+
+
